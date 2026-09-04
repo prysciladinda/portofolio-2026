@@ -24,6 +24,30 @@ function getGeminiApiKey(): string | undefined {
   return undefined;
 }
 
+const WORKERS_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+
+async function tryWorkersAI(message: string): Promise<string | null> {
+  try {
+    const ai = (
+      env as unknown as {
+        AI?: { run(model: string, input: unknown): Promise<unknown> };
+      }
+    )?.AI;
+    if (!ai) return null;
+    const out = (await ai.run(WORKERS_AI_MODEL, {
+      messages: [
+        { role: "system", content: PRYSCILA_SYSTEM_PROMPT },
+        { role: "user", content: message },
+      ],
+    })) as { response?: string };
+    if (out?.response && typeof out.response === "string") return out.response;
+    return null;
+  } catch (e) {
+    console.error("Workers AI error:", e);
+    return null;
+  }
+}
+
 const PRYSCILA_SYSTEM_PROMPT = `
 You are Pryscila-AI Bot, an interactive retro-arcade AI assistant on the official portfolio website of Pryscila Dinda Eliana.
 Your job is to answer questions from visitors, recruiters, and prospective clients politely, enthusiastically, and concisely in English.
@@ -64,10 +88,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
+    // 1. Cloudflare Workers AI (production — no region block, free tier)
+    const workersAiReply = await tryWorkersAI(message);
+    if (workersAiReply) {
+      return NextResponse.json({ reply: workersAiReply, provider: "workers-ai" });
+    }
+
     const apiKey = getGeminiApiKey();
 
     if (!apiKey) {
-      // Simulated intelligent response if GEMINI_API_KEY is not configured yet
+      // Simulated intelligent response if no AI provider is configured yet
       const fallbackResponse = generateSimulatedResponse(message);
       return NextResponse.json({
         reply: fallbackResponse,
